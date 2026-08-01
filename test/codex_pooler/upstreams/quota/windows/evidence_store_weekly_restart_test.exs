@@ -225,6 +225,34 @@ defmodule CodexPooler.Upstreams.Quota.Windows.EvidenceStoreWeeklyRestartTest do
     assert :none = EvidenceStore.parse_candidate(row.metadata)
   end
 
+  test "a replayed full-week same-anchor zero cannot confirm an exhausted weekly account restart" do
+    t0 = DateTime.utc_now() |> DateTime.add(-10, :minute) |> DateTime.truncate(:microsecond)
+    identity = identity!()
+    candidate_at = DateTime.add(t0, 5, :minute)
+    same_anchor = DateTime.add(candidate_at, @window_seconds, :second)
+    assert {:ok, _row} = exhausted_row!(identity, t0, reset_at: same_anchor)
+
+    # This is a live, coherent full-week countdown: its implied provider instant
+    # matches the first observation, and it can open the same-anchor proof lane.
+    live_payload =
+      floating_zero(candidate_at, reset_at: same_anchor, reset_after_seconds: @window_seconds)
+
+    assert {:ok, _row} = Windows.record_evidence(identity, live_payload, candidate_at)
+    row = account_row(identity)
+    assert Decimal.compare(row.used_percent, Decimal.new("100")) == :eq
+    assert {:ok, _candidate} = EvidenceStore.parse_candidate(row.metadata)
+
+    # The second poll is a replay of that response: its countdown still implies
+    # candidate_at rather than the later local observation, so it cannot supply
+    # the advancing provider observation required to confirm the reset.
+    replayed_at = DateTime.add(candidate_at, 240, :second)
+    assert {:ok, _row} = Windows.record_evidence(identity, live_payload, replayed_at)
+
+    row = account_row(identity)
+    assert Decimal.compare(row.used_percent, Decimal.new("100")) == :eq
+    assert DateTime.compare(row.observed_at, t0) == :eq
+  end
+
   test "a zero inside the confirmation span keeps waiting without resetting the clock" do
     t0 = DateTime.utc_now() |> DateTime.add(-10, :minute) |> DateTime.truncate(:microsecond)
     identity = identity!()

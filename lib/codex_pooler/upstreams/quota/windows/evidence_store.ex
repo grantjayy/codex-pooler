@@ -334,7 +334,30 @@ defmodule CodexPooler.Upstreams.Quota.Windows.EvidenceStore do
           merge_attrs_by_decision(existing, attrs, evidence, timestamp)
       end
 
-    put_accepted_positive_weekly_barrier(merged_attrs, evidence, existing, timestamp)
+    merged_attrs
+    |> maybe_replace_corroborated_exhausted_capacity(attrs, evidence, existing, timestamp)
+    |> put_accepted_positive_weekly_barrier(evidence, existing, timestamp)
+  end
+
+  defp maybe_replace_corroborated_exhausted_capacity(
+         merged_attrs,
+         attrs,
+         evidence,
+         existing,
+         timestamp
+       ) do
+    if evidence.source == "codex_usage_api" and account_weekly_evidence?(evidence) and
+         same_evidence_identity?(evidence, existing) and zero_percent?(evidence.used_percent) and
+         newer_observation?(evidence.observed_at, existing.observed_at) and
+         exhausted_by_used_percent?(existing) and
+         runtime_weekly_restart_corroborated?(evidence, existing, timestamp) do
+      merged_attrs
+      |> Map.put(:used_percent, evidence.used_percent)
+      |> Map.put(:active_limit, Map.get(attrs, :active_limit))
+      |> Map.put(:credits, Map.get(attrs, :credits))
+    else
+      merged_attrs
+    end
   end
 
   defp put_accepted_positive_weekly_barrier(attrs, evidence, existing, timestamp) do

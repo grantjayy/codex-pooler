@@ -191,6 +191,40 @@ defmodule CodexPooler.Upstreams.Quota.Windows.EvidenceStoreWeeklyRestartTest do
     assert Decimal.compare(row.used_percent, Decimal.new("100")) == :eq
   end
 
+  test "repeated live same-anchor zeros replace an exhausted weekly account" do
+    t0 = DateTime.utc_now() |> DateTime.add(-10, :minute) |> DateTime.truncate(:microsecond)
+    identity = identity!()
+    reset_at = DateTime.add(t0, @window_seconds, :second)
+    assert {:ok, _row} = exhausted_row!(identity, t0, reset_at: reset_at)
+
+    t1 = DateTime.add(t0, 300, :second)
+
+    assert {:ok, _row} =
+             Windows.record_evidence(
+               identity,
+               floating_zero(t1, reset_at: reset_at, reset_after_seconds: @window_seconds - 300),
+               t1
+             )
+
+    row = account_row(identity)
+    assert Decimal.compare(row.used_percent, Decimal.new("100")) == :eq
+    assert {:ok, _candidate} = EvidenceStore.parse_candidate(row.metadata)
+
+    t2 = DateTime.add(t1, 240, :second)
+
+    assert {:ok, _row} =
+             Windows.record_evidence(
+               identity,
+               floating_zero(t2, reset_at: reset_at, reset_after_seconds: @window_seconds - 540),
+               t2
+             )
+
+    row = account_row(identity)
+    assert Decimal.compare(row.used_percent, Decimal.new("0")) == :eq
+    assert DateTime.compare(row.observed_at, t2) == :eq
+    assert :none = EvidenceStore.parse_candidate(row.metadata)
+  end
+
   test "a zero inside the confirmation span keeps waiting without resetting the clock" do
     t0 = DateTime.utc_now() |> DateTime.add(-10, :minute) |> DateTime.truncate(:microsecond)
     identity = identity!()

@@ -225,6 +225,56 @@ defmodule CodexPooler.Upstreams.Quota.Windows.EvidenceStoreWeeklyRestartTest do
     assert :none = EvidenceStore.parse_candidate(row.metadata)
   end
 
+  test "confirmed same-anchor zero does not revive stale exhausted credit capacity" do
+    t0 = DateTime.utc_now() |> DateTime.add(-10, :minute) |> DateTime.truncate(:microsecond)
+    identity = identity!()
+    reset_at = DateTime.add(t0, @window_seconds, :second)
+    assert {:ok, row} = exhausted_row!(identity, t0, reset_at: reset_at)
+
+    row
+    |> AccountQuotaWindow.changeset(%{active_limit: 243, credits: 0})
+    |> Repo.update!()
+
+    zero_with_empty_balance = fn observed_at, reset_after_seconds ->
+      observed_at
+      |> floating_zero(reset_at: reset_at, reset_after_seconds: reset_after_seconds)
+      |> Map.merge(%{active_limit: 0, credits: 0})
+    end
+
+    t1 = DateTime.add(t0, 300, :second)
+
+    assert {:ok, _row} =
+             Windows.record_evidence(
+               identity,
+               zero_with_empty_balance.(t1, @window_seconds - 300),
+               t1
+             )
+
+    t2 = DateTime.add(t1, 240, :second)
+
+    assert {:ok, _row} =
+             Windows.record_evidence(
+               identity,
+               zero_with_empty_balance.(t2, @window_seconds - 540),
+               t2
+             )
+
+    row = account_row(identity)
+    assert Decimal.compare(row.used_percent, Decimal.new("0")) == :eq
+
+    t3 = DateTime.add(t2, 60, :second)
+
+    assert {:ok, _row} =
+             Windows.record_evidence(
+               identity,
+               zero_with_empty_balance.(t3, @window_seconds - 600),
+               t3
+             )
+
+    row = account_row(identity)
+    assert Decimal.compare(row.used_percent, Decimal.new("0")) == :eq
+  end
+
   test "a replayed full-week same-anchor zero cannot confirm an exhausted weekly account restart" do
     t0 = DateTime.utc_now() |> DateTime.add(-10, :minute) |> DateTime.truncate(:microsecond)
     identity = identity!()

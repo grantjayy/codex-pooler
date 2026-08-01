@@ -674,6 +674,13 @@ defmodule CodexPooler.Upstreams.Quota.Windows.EvidenceStore do
         accepted_attrs =
           existing
           |> accepted_snapshot_attrs(attrs, timestamp)
+          |> maybe_replace_same_anchor_exhausted_capacity(
+            attrs,
+            evidence,
+            existing,
+            metadata,
+            timestamp
+          )
           |> RelativeLiveness.put_canonical_metadata(evidence, existing, timestamp)
 
         if fixed_forward_anchor_confirmed?(metadata, evidence, existing, timestamp) do
@@ -784,6 +791,35 @@ defmodule CodexPooler.Upstreams.Quota.Windows.EvidenceStore do
          _timestamp
        ),
        do: false
+
+  defp maybe_replace_same_anchor_exhausted_capacity(
+         accepted_attrs,
+         attrs,
+         evidence,
+         existing,
+         metadata,
+         timestamp
+       ) do
+    case parse_candidate(metadata) do
+      {:ok, candidate} ->
+        if same_anchor_exhausted_weekly_zero_candidate?(
+             candidate,
+             evidence,
+             existing,
+             metadata,
+             timestamp
+           ) do
+          accepted_attrs
+          |> Map.put(:active_limit, Map.get(attrs, :active_limit))
+          |> Map.put(:credits, Map.get(attrs, :credits))
+        else
+          accepted_attrs
+        end
+
+      :none ->
+        accepted_attrs
+    end
+  end
 
   defp fixed_forward_anchor_confirmed?(metadata, evidence, existing, timestamp) do
     case parse_candidate(metadata) do
